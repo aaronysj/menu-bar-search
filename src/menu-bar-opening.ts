@@ -12,7 +12,7 @@ export async function openSelectedMenuBarItem(
   item: MenuBarItem,
   onRefresh: () => Promise<void> | void,
 ) {
-  const trySystemEventsFirst = shouldOpenWithSystemEvents(item);
+  const trySystemEventsFirst = shouldOpenWithSystemEventsFirst(item);
 
   try {
     if (trySystemEventsFirst) {
@@ -22,7 +22,7 @@ export async function openSelectedMenuBarItem(
 
     await openMenuBarItemWithHelper(helperPath, item.id, openHint(item));
   } catch (caughtError) {
-    if (!trySystemEventsFirst && shouldOpenWithSystemEvents(item)) {
+    if (!trySystemEventsFirst && canFallbackToSystemEvents(item)) {
       try {
         await openWithSystemEvents(item);
         return;
@@ -50,10 +50,17 @@ export async function openSelectedMenuBarItem(
   }
 }
 
-function shouldOpenWithSystemEvents(item: MenuBarItem) {
+function shouldOpenWithSystemEventsFirst(item: MenuBarItem) {
+  return (
+    canFallbackToSystemEvents(item) &&
+    item.openStrategy === "click" &&
+    item.isObscured !== true
+  );
+}
+
+function canFallbackToSystemEvents(item: MenuBarItem) {
   return (
     canOpenWithSystemEvents(item) &&
-    item.openStrategy === "click" &&
     item.category === "app:generic" &&
     item.isObscured !== true
   );

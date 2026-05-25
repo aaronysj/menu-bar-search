@@ -8,12 +8,8 @@ import { HelperError, MenuBarItem, MenuBarItemHint } from "./menu-bar-types";
 const execFileAsync = promisify(execFile);
 const DEFAULT_TIMEOUT_MS = 8000;
 
-type CommandPreferences = {
-  helperPath?: string;
-};
-
 export function useHelperPath() {
-  const preferences = getPreferenceValues<CommandPreferences>();
+  const preferences = getPreferenceValues<Preferences.Index>();
   if (preferences.helperPath?.trim()) {
     return preferences.helperPath.trim();
   }
