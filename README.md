@@ -1,13 +1,15 @@
 # Menu Bar Search
 
-A Raycast extension for searching macOS menu bar items and opening the selected menu directly from Raycast.
+Search and open macOS menu bar items directly from Raycast, including icons that are hidden behind the MacBook notch and no longer clickable with the pointer.
+
+Menu Bar Search is built for crowded menu bars. When macOS hides status items behind the camera housing, you can still find the item in Raycast and open its menu without rearranging apps, changing display settings, or guessing where the icon went.
 
 The extension uses the public macOS Accessibility API. It only lists menu bar items that are currently exposed in the Accessibility tree, so ordinary app menus such as File, Edit, or View are not included.
 
 ## Features
 
-- Search visible macOS menu bar items, system extras, input methods, and supported app status items.
-- Open the selected item from Raycast.
+- Search visible and Accessibility-exposed macOS menu bar items, system extras, input methods, and supported app status items.
+- Open the selected item from Raycast, even when a menu bar icon is hidden behind the MacBook notch.
 - Refresh the list when menu bar items move, appear, or disappear.
 - Copy diagnostic details for troubleshooting Accessibility edge cases.
 

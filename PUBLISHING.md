@@ -17,14 +17,15 @@ Raycast recommends at least three screenshots and allows up to six. Capture them
 
 Current screenshots:
 
-- `metadata/menu-bar-items.png`: generated from `images/img.png`, showing the populated menu bar item list.
-- `metadata/open-menu.png`: generated from `images/img_1.png`, showing a selected menu bar item opened.
+- `metadata/menu-bar-search-list.png`: the populated menu bar item list.
+- `metadata/menu-bar-search-actions.png`: the action panel with Open Menu, Refresh, and diagnostics.
+- `metadata/menu-bar-search-open-menu.png`: a selected menu bar item opened from the menu bar.
 
-Suggested remaining shot:
+Optional additional shot:
 
 - `metadata/accessibility-permission.png`: the recovery view or permission-related state.
 
-Avoid showing sensitive menu bar data, personal names, private app names, API keys, or multiple desktop backgrounds. Before submission, prefer replacing the generated screenshots with fresh Raycast Window Capture exports at 2000 x 1250 pixels, especially `metadata/open-menu.png`, which was adapted from a portrait screenshot.
+Avoid showing sensitive menu bar data, personal names, private app names, API keys, or multiple desktop backgrounds.
 
 ## Binary Review Notes
 

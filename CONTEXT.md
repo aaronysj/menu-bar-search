@@ -42,7 +42,7 @@ For input-method items, visible menu bar items are opened with a single physical
 
 For visible Control Center-owned system items, a successful Accessibility action is trusted. Some system extras such as Clock open a panel that the helper cannot reliably observe from the original menu bar click point; following that successful AX action with a physical click can immediately close the panel again. A single physical click is reserved for cases where the Accessibility action itself fails.
 
-For items hidden behind the camera housing with no physical click point, a successful Accessibility action is treated as success even when the helper cannot observe an opened menu. Visible items still require a detected menu, panel, or window change so AX false positives do not look successful.
+For items hidden behind the camera housing with no physical click point, an attempted Accessibility action is treated as success even when macOS returns a non-success code. These status items have no physical fallback path, and some apps open their menu while returning an unreliable AX result. Visible items still require a detected menu, panel, window change, or a trusted successful result so AX false positives do not look successful.
 
 **Debug Snapshot**
 

@@ -247,7 +247,8 @@ enum MenuOpening {
                 target.element,
                 ownerPid: target.item.ownerPid,
                 preferShowMenu: true,
-                trustSuccessfulActionResult: policy.trustSuccessfulAccessibilityResult
+                trustSuccessfulActionResult: policy.trustSuccessfulAccessibilityResult,
+                trustAttemptedActionResult: policy.trustAttemptedAccessibilityAction
             )
             attempts.append(OpenAttemptTrace(
                 method: "accessibility",
@@ -327,6 +328,7 @@ struct OpenPolicy {
     let shouldTryAccessibilityFallback: Bool
     let coordinateClickMode: CoordinateClickMode
     let trustSuccessfulAccessibilityResult: Bool
+    let trustAttemptedAccessibilityAction: Bool
     let failureMessage: String
 
     init(item: MenuBarItem, element: AXUIElement, isObscured: Bool, clickPoint: Point?) {
@@ -346,6 +348,10 @@ struct OpenPolicy {
         coordinateClickMode = Self.coordinateClickMode(item: item)
         trustSuccessfulAccessibilityResult = Self.trustsSuccessfulAccessibilityResult(
             item: item,
+            isObscured: isObscured,
+            clickPoint: clickPoint
+        )
+        trustAttemptedAccessibilityAction = Self.trustsAttemptedAccessibilityAction(
             isObscured: isObscured,
             clickPoint: clickPoint
         )
@@ -380,6 +386,10 @@ struct OpenPolicy {
 
     static func trustsSuccessfulAccessibilityResult(item: MenuBarItem, isObscured: Bool, clickPoint: Point?) -> Bool {
         isControlCenterSystemItem(item) || (isObscured && clickPoint == nil)
+    }
+
+    static func trustsAttemptedAccessibilityAction(isObscured: Bool, clickPoint: Point?) -> Bool {
+        isObscured && clickPoint == nil
     }
 
     static func failureMessage(isObscured: Bool, prefersAccessibility: Bool) -> String {
@@ -454,7 +464,8 @@ func performAccessibilityOpen(
     _ element: AXUIElement,
     ownerPid: pid_t,
     preferShowMenu: Bool = false,
-    trustSuccessfulActionResult: Bool = false
+    trustSuccessfulActionResult: Bool = false,
+    trustAttemptedActionResult: Bool = false
 ) -> (attempted: Bool, succeeded: Bool, detail: String) {
     AXUIElementSetAttributeValue(element, kAXFocusedAttribute as CFString, kCFBooleanTrue)
 
@@ -502,13 +513,18 @@ func performAccessibilityOpen(
             details.append("trustedResult=true")
             return (true, true, details.joined(separator: ","))
         }
+
+        if trustAttemptedActionResult {
+            details.append("trustedAttempt=true")
+            return (true, true, details.joined(separator: ","))
+        }
     }
 
     return (attempted, false, details.joined(separator: ","))
 }
 
 func didOpenMenuBarUI(element: AXUIElement, ownerPid: pid_t, windowFingerprintsBefore: Set<String>) -> Bool {
-    if let clickPoint = clickablePoint(of: element), isMenuOpenNear(clickPoint) {
+    if let observationPoint = clickablePoint(of: element) ?? centerPoint(of: element), isMenuOpenNear(observationPoint) {
         return true
     }
 
@@ -975,12 +991,24 @@ enum SelfTest {
             "trust_obscured_without_click_point"
         )
         try assert(
+            OpenPolicy.trustsAttemptedAccessibilityAction(isObscured: true, clickPoint: nil),
+            "trust_obscured_attempt_without_click_point"
+        )
+        try assert(
             !OpenPolicy.trustsSuccessfulAccessibilityResult(item: docker, isObscured: false, clickPoint: nil),
             "do_not_trust_visible_without_click_point"
         )
         try assert(
+            !OpenPolicy.trustsAttemptedAccessibilityAction(isObscured: false, clickPoint: nil),
+            "do_not_trust_visible_attempt_without_click_point"
+        )
+        try assert(
             !OpenPolicy.trustsSuccessfulAccessibilityResult(item: docker, isObscured: true, clickPoint: Point(x: 10, y: 10)),
             "do_not_trust_obscured_with_click_point"
+        )
+        try assert(
+            !OpenPolicy.trustsAttemptedAccessibilityAction(isObscured: true, clickPoint: Point(x: 10, y: 10)),
+            "do_not_trust_obscured_attempt_with_click_point"
         )
     }
 
