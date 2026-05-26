@@ -93,6 +93,15 @@ struct HintMatch<Element> {
     let frameDistance: Double
 }
 
+struct MenuBarElementSnapshot {
+    let labels: [String?]
+    let frame: Frame?
+    let center: CGPoint?
+    let actions: [String]
+    let hasScreenPosition: Bool
+    let isObscured: Bool
+}
+
 enum CoordinateClickMode: Equatable {
     case robust
     case singlePosted
@@ -186,15 +195,17 @@ enum MenuBarCatalog {
                 let candidates = menuBarItems(in: source.element)
                 for (index, element) in candidates.enumerated() {
                     guard isLikelyMenuBarItem(element) else { continue }
+                    let snapshot = menuBarElementSnapshot(element)
 
                     let item = makeMenuBarItem(
                         element: element,
                         app: app,
                         source: source.name,
-                        sourceIndex: index
+                        sourceIndex: index,
+                        snapshot: snapshot
                     )
 
-                    guard !shouldFilterMenuBarItem(element: element, app: app, item: item) else { continue }
+                    guard !shouldFilterMenuBarItem(app: app, item: item, snapshot: snapshot) else { continue }
                     let fingerprint = menuBarItemFingerprint(item)
                     guard !seenFingerprints.contains(fingerprint) else { continue }
                     seenFingerprints.insert(fingerprint)
@@ -566,15 +577,14 @@ func openURLSemanticItem(urlString: String, method: String) -> (method: String, 
     return (method, true, succeeded, urlString)
 }
 
-func menuOpenStrategy(category: String, element: AXUIElement) -> String {
-    let center = centerPoint(of: element)
+func menuOpenStrategy(category: String, center: CGPoint?, isObscured: Bool) -> String {
     let isInObscuredArea = center.map(isInObscuredMenuBarArea) ?? false
 
     if OpenPolicy.prefersAccessibility(category: category, isInObscuredMenuBarArea: isInObscuredArea) {
         return "ax"
     }
 
-    if isElementObscured(element) {
+    if isObscured {
         return "ax"
     }
 
@@ -655,7 +665,11 @@ func postMouseClick(
 }
 
 func isElementObscured(_ element: AXUIElement) -> Bool {
-    guard let frame = frame(of: element), let center = centerPoint(of: element) else {
+    isElementObscured(frame: frame(of: element), center: centerPoint(of: element))
+}
+
+func isElementObscured(frame: Frame?, center: CGPoint?) -> Bool {
+    guard let frame, let center else {
         return false
     }
 
@@ -808,6 +822,7 @@ enum SelfTest {
         try fallsBackToSingleClickForVisibleControlCenterItems()
         try keepsSpotlightOffCoordinateFallback()
         try includesScreenPositionedItemsEvenWithoutClickPoint()
+        try sanitizesIconCacheKeys()
         try trustsControlCenterAccessibilitySuccess()
         try trustsAccessibilitySuccessWhenOpenCannotBeObserved()
         try rejectsMissingSemanticItemInsteadOfOpeningNearbySystemItem()
@@ -974,6 +989,11 @@ enum SelfTest {
     private static func includesScreenPositionedItemsEvenWithoutClickPoint() throws {
         try assert(shouldIncludeMenuBarItemInCatalog(hasScreenPosition: true), "catalog_includes_screen_positioned")
         try assert(!shouldIncludeMenuBarItemInCatalog(hasScreenPosition: false), "catalog_excludes_no_screen_position")
+    }
+
+    private static func sanitizesIconCacheKeys() throws {
+        try assert(sanitizedIconCacheKey("com.electron.dockerdesktop") == "com-electron-dockerdesktop", "icon_key_bundle_id")
+        try assert(sanitizedIconCacheKey("") == "unknown", "icon_key_empty")
     }
 
     private static func trustsAccessibilitySuccessWhenOpenCannotBeObserved() throws {
@@ -1230,8 +1250,9 @@ func findElement(id: String, hint: ElementHint? = nil) -> (element: AXUIElement,
         let appElement = AXUIElementCreateApplication(app.processIdentifier)
         for source in menuBarSources(for: appElement, app: app) {
             for (index, element) in menuBarItems(in: source.element).enumerated() where isLikelyMenuBarItem(element) {
-                let item = makeMenuBarItem(element: element, app: app, source: source.name, sourceIndex: index)
-                guard !shouldFilterMenuBarItem(element: element, app: app, item: item) else { continue }
+                let snapshot = menuBarElementSnapshot(element)
+                let item = makeMenuBarItem(element: element, app: app, source: source.name, sourceIndex: index, snapshot: snapshot)
+                guard !shouldFilterMenuBarItem(app: app, item: item, snapshot: snapshot) else { continue }
                 let hintScore = hint.map { hintMatchScore(item: item, source: source.name, hint: $0) } ?? 0
                 if item.id == id {
                     if let hint {
@@ -1304,11 +1325,34 @@ func menuBarItems(in element: AXUIElement) -> [AXUIElement] {
     return found
 }
 
-func makeMenuBarItem(element: AXUIElement, app: NSRunningApplication, source: String, sourceIndex: Int) -> MenuBarItem {
-    let labels = menuBarItemLabelCandidates(element)
+func menuBarElementSnapshot(_ element: AXUIElement) -> MenuBarElementSnapshot {
+    let itemFrame = frame(of: element)
+    let itemCenter = itemFrame.map { CGPoint(x: $0.x + $0.width / 2, y: $0.y + $0.height / 2) }
+    let hasScreenPosition = itemCenter.map { screenContainingAccessibilityPoint($0) != nil } ?? false
+    let itemIsObscured = isElementObscured(frame: itemFrame, center: itemCenter)
+
+    return MenuBarElementSnapshot(
+        labels: menuBarItemLabelCandidates(element),
+        frame: itemFrame,
+        center: itemCenter,
+        actions: actions(of: element),
+        hasScreenPosition: hasScreenPosition,
+        isObscured: itemIsObscured
+    )
+}
+
+func makeMenuBarItem(
+    element: AXUIElement,
+    app: NSRunningApplication,
+    source: String,
+    sourceIndex: Int,
+    snapshot: MenuBarElementSnapshot
+) -> MenuBarItem {
+    let labels = snapshot.labels
     let category = SemanticCategory.classify(labels: labels, app: app)
     let title = menuBarItemTitle(labels: labels, app: app, category: category)
-    let frame = frame(of: element)
+    let frame = snapshot.frame
+    let appPath = app.bundleURL?.path ?? app.executableURL?.path
     let id = stableID(
         app: app,
         source: source,
@@ -1321,15 +1365,15 @@ func makeMenuBarItem(element: AXUIElement, app: NSRunningApplication, source: St
         id: id,
         title: title,
         category: category,
-        openStrategy: menuOpenStrategy(category: category, element: element),
-        isObscured: isElementObscured(element),
+        openStrategy: menuOpenStrategy(category: category, center: snapshot.center, isObscured: snapshot.isObscured),
+        isObscured: snapshot.isObscured,
         ownerPid: app.processIdentifier,
         bundleId: app.bundleIdentifier,
         processName: app.localizedName,
-        appPath: app.bundleURL?.path ?? app.executableURL?.path,
-        iconPath: iconPath(for: app),
+        appPath: appPath,
+        iconPath: appPath == nil ? iconPath(for: app) : nil,
         frame: frame,
-        actions: actions(of: element),
+        actions: snapshot.actions,
         source: source
     )
 }
@@ -1354,8 +1398,8 @@ func shouldScanStandardMenuBar(_ app: NSRunningApplication) -> Bool {
     }
 }
 
-func shouldFilterMenuBarItem(element: AXUIElement, app: NSRunningApplication, item: MenuBarItem) -> Bool {
-    guard isCatalogMenuBarItem(element) else {
+func shouldFilterMenuBarItem(app: NSRunningApplication, item: MenuBarItem, snapshot: MenuBarElementSnapshot) -> Bool {
+    guard isCatalogMenuBarItem(snapshot) else {
         return true
     }
 
@@ -1366,9 +1410,8 @@ func shouldFilterMenuBarItem(element: AXUIElement, app: NSRunningApplication, it
     return item.category == "system:control-center"
 }
 
-func isCatalogMenuBarItem(_ element: AXUIElement) -> Bool {
-    let hasScreenPosition = centerPoint(of: element).map { screenContainingAccessibilityPoint($0) != nil } ?? false
-    return shouldIncludeMenuBarItemInCatalog(hasScreenPosition: hasScreenPosition)
+func isCatalogMenuBarItem(_ snapshot: MenuBarElementSnapshot) -> Bool {
+    shouldIncludeMenuBarItemInCatalog(hasScreenPosition: snapshot.hasScreenPosition)
 }
 
 func shouldIncludeMenuBarItemInCatalog(hasScreenPosition: Bool) -> Bool {
@@ -1853,29 +1896,20 @@ func normalizedText(_ value: String?) -> String? {
 }
 
 func iconPath(for app: NSRunningApplication) -> String? {
-    guard let icon = app.icon else {
-        return nil
+    let fileURL = iconCacheFileURL(for: app)
+
+    if FileManager.default.fileExists(atPath: fileURL.path) {
+        return fileURL.path
     }
 
-    let cacheURL = URL(fileURLWithPath: NSTemporaryDirectory())
-        .appendingPathComponent("menubarctl-icons", isDirectory: true)
-
     do {
-        try FileManager.default.createDirectory(at: cacheURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
     } catch {
         return nil
     }
 
-    let key = app.bundleIdentifier ?? app.localizedName ?? "pid-\(app.processIdentifier)"
-    let fileName = key
-        .map { character in
-            character.isLetter || character.isNumber ? character : "-"
-        }
-        .reduce(into: "") { $0.append($1) }
-    let fileURL = cacheURL.appendingPathComponent("\(fileName).png")
-
-    if FileManager.default.fileExists(atPath: fileURL.path) {
-        return fileURL.path
+    guard let icon = app.icon else {
+        return nil
     }
 
     icon.size = NSSize(width: 256, height: 256)
@@ -1894,6 +1928,34 @@ func iconPath(for app: NSRunningApplication) -> String? {
     } catch {
         return nil
     }
+}
+
+func iconCacheFileURL(for app: NSRunningApplication) -> URL {
+    let key = app.bundleIdentifier ??
+        app.bundleURL?.path ??
+        app.executableURL?.path ??
+        app.localizedName ??
+        "pid-\(app.processIdentifier)"
+
+    return iconCacheDirectoryURL()
+        .appendingPathComponent("\(sanitizedIconCacheKey(key)).png")
+}
+
+func iconCacheDirectoryURL() -> URL {
+    let baseURL = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first ??
+        URL(fileURLWithPath: NSTemporaryDirectory())
+
+    return baseURL.appendingPathComponent("menubarctl-icons", isDirectory: true)
+}
+
+func sanitizedIconCacheKey(_ key: String) -> String {
+    let sanitized = key
+        .map { character in
+            character.isLetter || character.isNumber ? character : "-"
+        }
+        .reduce(into: "") { $0.append($1) }
+
+    return sanitized.isEmpty ? "unknown" : sanitized
 }
 
 func frame(of element: AXUIElement) -> Frame? {

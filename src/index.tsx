@@ -9,7 +9,7 @@ import {
   open,
   showToast,
 } from "@raycast/api";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   getLastOpenTrace,
   getMenuBarItemDebugInfo,
@@ -17,27 +17,82 @@ import {
   normalizeError,
   useHelperPath,
 } from "./helper-client";
+import {
+  clearCachedMenuBarCatalog,
+  readCachedMenuBarCatalog,
+  readStaleMenuBarCatalog,
+  writeCachedMenuBarCatalog,
+} from "./menu-bar-catalog-cache";
 import { openSelectedMenuBarItem } from "./menu-bar-opening";
 import { displayTitle, itemIcon, openHint } from "./menu-bar-presentation";
 import { HelperError, MenuBarItem } from "./menu-bar-types";
 
 export default function Command() {
-  const [items, setItems] = useState<MenuBarItem[]>([]);
+  const helperPath = useHelperPath();
+  const [items, setItems] = useState<MenuBarItem[]>(
+    () => readCachedMenuBarCatalog(helperPath) ?? [],
+  );
   const [error, setError] = useState<HelperError | undefined>();
   const [isLoading, setIsLoading] = useState(true);
-  const helperPath = useHelperPath();
+  const itemsRef = useRef(items);
+  const requestIdRef = useRef(0);
+
+  useEffect(() => {
+    itemsRef.current = items;
+  }, [items]);
 
   const refresh = useCallback(async () => {
-    setIsLoading(true);
+    const requestId = requestIdRef.current + 1;
+    requestIdRef.current = requestId;
+    const hadItems = itemsRef.current.length > 0;
+    const staleItems = readStaleMenuBarCatalog(helperPath);
+
+    if (!hadItems) {
+      setIsLoading(true);
+    }
     setError(undefined);
 
     try {
-      setItems(await listMenuBarItems(helperPath));
+      const nextItems = await listMenuBarItems(helperPath);
+      if (requestId !== requestIdRef.current) return;
+      itemsRef.current = nextItems;
+      setItems(nextItems);
+      writeCachedMenuBarCatalog(helperPath, nextItems);
     } catch (caughtError) {
-      setItems([]);
-      setError(normalizeError(caughtError));
+      if (requestId !== requestIdRef.current) return;
+      const nextError = normalizeError(caughtError);
+
+      if (nextError.code === "accessibility_permission_required") {
+        clearCachedMenuBarCatalog(helperPath);
+        itemsRef.current = [];
+        setItems([]);
+        setError(nextError);
+        return;
+      }
+
+      if (hadItems) {
+        await showToast({
+          style: Toast.Style.Failure,
+          title: nextError.message ?? "Unable to refresh menu bar items",
+          message: nextError.recoverySuggestion,
+        });
+      } else if (staleItems?.length) {
+        itemsRef.current = staleItems;
+        setItems(staleItems);
+        await showToast({
+          style: Toast.Style.Failure,
+          title: nextError.message ?? "Showing cached menu bar items",
+          message: nextError.recoverySuggestion,
+        });
+      } else {
+        itemsRef.current = [];
+        setItems([]);
+        setError(nextError);
+      }
     } finally {
-      setIsLoading(false);
+      if (requestId === requestIdRef.current) {
+        setIsLoading(false);
+      }
     }
   }, [helperPath]);
 

@@ -49,3 +49,4 @@ The helper does not use private macOS APIs and does not download external binari
 - The Raycast command owns product UI only; helper protocol details live behind a small helper Adapter, and Raycast-side opening fallbacks live behind a Menu Bar Opening module.
 - The UI does not infer menu bar categories. It presents the category returned by the helper, which keeps list behavior, icons, and opening strategy aligned.
 - Opening a stale list item re-resolves the current Accessibility element from stable owner/title/category facts before considering frame proximity.
+- The command may display a cached catalog immediately for speed, but opening still uses the helper to resolve the current Accessibility tree before acting.
