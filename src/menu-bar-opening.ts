@@ -16,8 +16,12 @@ export async function openSelectedMenuBarItem(
 
   try {
     if (trySystemEventsFirst) {
-      await openWithSystemEvents(item);
-      return;
+      try {
+        await openWithSystemEvents(item);
+        return;
+      } catch {
+        // Let the helper re-resolve the item against the live Accessibility tree.
+      }
     }
 
     await openMenuBarItemWithHelper(helperPath, item.id, openHint(item));
@@ -34,11 +38,7 @@ export async function openSelectedMenuBarItem(
     const error = normalizeError(caughtError);
     if (error.code === "item_not_found") {
       await Promise.resolve(onRefresh());
-      await showToast({
-        style: Toast.Style.Success,
-        title: "Menu bar changed",
-        message: "The list has been refreshed.",
-      });
+      await showMenuBarChangedToast();
       return;
     }
 
@@ -48,6 +48,14 @@ export async function openSelectedMenuBarItem(
       message: error.recoverySuggestion,
     });
   }
+}
+
+export function showMenuBarChangedToast() {
+  return showToast({
+    style: Toast.Style.Success,
+    title: "Menu bar changed",
+    message: "The list has been refreshed.",
+  });
 }
 
 function shouldOpenWithSystemEventsFirst(item: MenuBarItem) {
@@ -77,9 +85,10 @@ async function openWithSystemEvents(item: MenuBarItem) {
 
   const clickX = item.frame.x + item.frame.width / 2;
   const clickY = item.frame.y + item.frame.height / 2;
+  const tolerance = Math.max(item.frame.width, item.frame.height);
 
   await runAppleScript(
-    systemEventsClickScript(item.processName, clickX, clickY),
+    systemEventsClickScript(item.processName, clickX, clickY, tolerance),
     {
       timeout: 2500,
     },
@@ -90,6 +99,7 @@ function systemEventsClickScript(
   processName: string,
   clickX: number,
   clickY: number,
+  tolerance: number,
 ) {
   return `
 tell application "System Events"
@@ -114,6 +124,7 @@ tell application "System Events"
       end if
     end repeat
     if bestItem is missing value then error "menu bar item not found"
+    if bestDistance > ${tolerance} then error "menu bar item moved"
     click bestItem
     return bestDistance as text
   end tell

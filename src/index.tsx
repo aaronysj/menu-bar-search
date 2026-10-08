@@ -23,7 +23,10 @@ import {
   readStaleMenuBarCatalog,
   writeCachedMenuBarCatalog,
 } from "./menu-bar-catalog-cache";
-import { openSelectedMenuBarItem } from "./menu-bar-opening";
+import {
+  openSelectedMenuBarItem,
+  showMenuBarChangedToast,
+} from "./menu-bar-opening";
 import { displayTitle, itemIcon, openHint } from "./menu-bar-presentation";
 import { HelperError, MenuBarItem } from "./menu-bar-types";
 
@@ -35,66 +38,82 @@ export default function Command() {
   const [error, setError] = useState<HelperError | undefined>();
   const [isLoading, setIsLoading] = useState(true);
   const itemsRef = useRef(items);
-  const requestIdRef = useRef(0);
+  const isCatalogFreshRef = useRef(false);
+  const refreshPromiseRef = useRef<Promise<void> | undefined>(undefined);
 
-  useEffect(() => {
-    itemsRef.current = items;
-  }, [items]);
+  const applyItems = useCallback((nextItems: MenuBarItem[]) => {
+    itemsRef.current = nextItems;
+    setItems(nextItems);
+  }, []);
 
-  const refresh = useCallback(async () => {
-    const requestId = requestIdRef.current + 1;
-    requestIdRef.current = requestId;
-    const hadItems = itemsRef.current.length > 0;
-    const staleItems = readStaleMenuBarCatalog(helperPath);
+  const refresh = useCallback(() => {
+    if (refreshPromiseRef.current) return refreshPromiseRef.current;
+    isCatalogFreshRef.current = false;
 
-    if (!hadItems) {
-      setIsLoading(true);
-    }
+    setIsLoading(true);
     setError(undefined);
 
-    try {
-      const nextItems = await listMenuBarItems(helperPath);
-      if (requestId !== requestIdRef.current) return;
-      itemsRef.current = nextItems;
-      setItems(nextItems);
-      writeCachedMenuBarCatalog(helperPath, nextItems);
-    } catch (caughtError) {
-      if (requestId !== requestIdRef.current) return;
-      const nextError = normalizeError(caughtError);
+    const request = (async () => {
+      try {
+        const nextItems = await listMenuBarItems(helperPath);
+        writeCachedMenuBarCatalog(helperPath, nextItems);
+        applyItems(nextItems);
+        isCatalogFreshRef.current = true;
+      } catch (caughtError) {
+        const nextError = normalizeError(caughtError);
+        const cachedItems = isTransientCatalogError(nextError)
+          ? itemsRef.current.length > 0
+            ? itemsRef.current
+            : readStaleMenuBarCatalog(helperPath)
+          : undefined;
 
-      if (nextError.code === "accessibility_permission_required") {
-        clearCachedMenuBarCatalog(helperPath);
-        itemsRef.current = [];
-        setItems([]);
-        setError(nextError);
-        return;
-      }
+        if (
+          nextError.code === "accessibility_permission_required" ||
+          nextError.code === "helper_missing"
+        ) {
+          clearCachedMenuBarCatalog(helperPath);
+        }
 
-      if (hadItems) {
-        await showToast({
-          style: Toast.Style.Failure,
-          title: nextError.message ?? "Unable to refresh menu bar items",
-          message: nextError.recoverySuggestion,
-        });
-      } else if (staleItems?.length) {
-        itemsRef.current = staleItems;
-        setItems(staleItems);
-        await showToast({
-          style: Toast.Style.Failure,
-          title: nextError.message ?? "Showing cached menu bar items",
-          message: nextError.recoverySuggestion,
-        });
-      } else {
-        itemsRef.current = [];
-        setItems([]);
-        setError(nextError);
-      }
-    } finally {
-      if (requestId === requestIdRef.current) {
+        applyItems(cachedItems ?? []);
+        if (cachedItems?.length) {
+          await showToast({
+            style: Toast.Style.Failure,
+            title: nextError.message ?? "Unable to refresh menu bar items",
+            message: nextError.recoverySuggestion,
+          });
+        } else {
+          setError(nextError);
+        }
+      } finally {
+        refreshPromiseRef.current = undefined;
         setIsLoading(false);
       }
-    }
-  }, [helperPath]);
+    })();
+    refreshPromiseRef.current = request;
+    return request;
+  }, [applyItems, helperPath]);
+
+  const resolveFreshItem = useCallback(
+    async (id: string) => {
+      if (!isCatalogFreshRef.current) await refresh();
+      if (!isCatalogFreshRef.current) return undefined;
+
+      const item = itemsRef.current.find((candidate) => candidate.id === id);
+      if (!item) {
+        await showMenuBarChangedToast();
+      }
+      return item;
+    },
+    [refresh],
+  );
+
+  const openItem = useCallback(
+    async (id: string) => {
+      const item = await resolveFreshItem(id);
+      if (item) await openSelectedMenuBarItem(helperPath, item, refresh);
+    },
+    [helperPath, refresh, resolveFreshItem],
+  );
 
   useEffect(() => {
     refresh();
@@ -127,6 +146,7 @@ export default function Command() {
           key={item.id}
           helperPath={helperPath}
           item={item}
+          onOpen={openItem}
           onRefresh={refresh}
         />
       ))}
@@ -134,12 +154,17 @@ export default function Command() {
   );
 }
 
+function isTransientCatalogError(error: HelperError) {
+  return error.code === "helper_timeout";
+}
+
 function MenuBarListItem(props: {
   helperPath: string;
   item: MenuBarItem;
+  onOpen: (id: string) => Promise<void>;
   onRefresh: () => void;
 }) {
-  const { helperPath, item, onRefresh } = props;
+  const { helperPath, item, onOpen, onRefresh } = props;
   const title = displayTitle(item);
 
   return (
@@ -156,9 +181,7 @@ function MenuBarListItem(props: {
           <Action
             title="Open Menu"
             icon={Icon.Mouse}
-            onAction={async () => {
-              await openSelectedMenuBarItem(helperPath, item, onRefresh);
-            }}
+            onAction={() => onOpen(item.id)}
           />
           <Action
             title="Refresh"

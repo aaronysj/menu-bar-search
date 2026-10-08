@@ -4,6 +4,7 @@ import { MenuBarItem } from "./menu-bar-types";
 
 const CATALOG_CACHE_VERSION = 1;
 const FRESH_CACHE_TTL_MS = 10 * 60 * 1000;
+const STALE_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const cache = new Cache({ namespace: "menu-bar-catalog" });
 
 type CachedCatalog = {
@@ -20,8 +21,11 @@ export function readCachedMenuBarCatalog(helperPath: string, now = Date.now()) {
   return catalog.items;
 }
 
-export function readStaleMenuBarCatalog(helperPath: string) {
-  return readRawCachedCatalog(helperPath)?.items;
+export function readStaleMenuBarCatalog(helperPath: string, now = Date.now()) {
+  const catalog = readRawCachedCatalog(helperPath);
+  if (!catalog) return undefined;
+  if (now - catalog.writtenAt > STALE_CACHE_TTL_MS) return undefined;
+  return catalog.items;
 }
 
 export function writeCachedMenuBarCatalog(
@@ -29,7 +33,10 @@ export function writeCachedMenuBarCatalog(
   items: MenuBarItem[],
   now = Date.now(),
 ) {
-  if (items.length === 0) return;
+  if (items.length === 0) {
+    cache.remove(cacheKey(helperPath));
+    return;
+  }
 
   const payload: CachedCatalog = {
     version: CATALOG_CACHE_VERSION,

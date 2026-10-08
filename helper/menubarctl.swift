@@ -823,6 +823,10 @@ enum SelfTest {
         try keepsSpotlightOffCoordinateFallback()
         try includesScreenPositionedItemsEvenWithoutClickPoint()
         try sanitizesIconCacheKeys()
+        try requiresBundleIdentifierForIconCache()
+        try distinguishesIconCacheKeyCollisions()
+        try keepsIconCacheKeysDeterministic()
+        try computesFrameCenters()
         try trustsControlCenterAccessibilitySuccess()
         try trustsAccessibilitySuccessWhenOpenCannotBeObserved()
         try rejectsMissingSemanticItemInsteadOfOpeningNearbySystemItem()
@@ -994,6 +998,32 @@ enum SelfTest {
     private static func sanitizesIconCacheKeys() throws {
         try assert(sanitizedIconCacheKey("com.electron.dockerdesktop") == "com-electron-dockerdesktop", "icon_key_bundle_id")
         try assert(sanitizedIconCacheKey("") == "unknown", "icon_key_empty")
+    }
+
+    private static func requiresBundleIdentifierForIconCache() throws {
+        try assert(iconCacheKey(bundleIdentifier: nil) == nil, "icon_key_requires_bundle_id")
+        try assert(iconCacheKey(bundleIdentifier: "") == nil, "icon_key_rejects_empty_bundle_id")
+    }
+
+    private static func distinguishesIconCacheKeyCollisions() throws {
+        let dashed = iconCacheKey(bundleIdentifier: "com.foo-bar")
+        let dotted = iconCacheKey(bundleIdentifier: "com.foo.bar")
+        try assert(dashed != nil && dotted != nil && dashed != dotted, "icon_key_distinguishes_sanitized_collision")
+    }
+
+    private static func keepsIconCacheKeysDeterministic() throws {
+        let bundleIdentifier = "com.electron.dockerdesktop"
+        try assert(
+            iconCacheKey(bundleIdentifier: bundleIdentifier) == iconCacheKey(bundleIdentifier: bundleIdentifier),
+            "icon_key_deterministic"
+        )
+        try assert(iconCacheKey(bundleIdentifier: "a") == "a-af63dc4c8601ec8c", "icon_key_stable_fnv1a")
+    }
+
+    private static func computesFrameCenters() throws {
+        let center = centerPoint(of: Frame(x: -100, y: 5.5, width: 47, height: 24))
+        try assert(center == CGPoint(x: -76.5, y: 17.5), "frame_center_fractional_negative_coordinates")
+        try assert(centerPoint(of: Frame(x: 0, y: 0, width: 0, height: 0)) == .zero, "frame_center_zero_size")
     }
 
     private static func trustsAccessibilitySuccessWhenOpenCannotBeObserved() throws {
@@ -1327,7 +1357,7 @@ func menuBarItems(in element: AXUIElement) -> [AXUIElement] {
 
 func menuBarElementSnapshot(_ element: AXUIElement) -> MenuBarElementSnapshot {
     let itemFrame = frame(of: element)
-    let itemCenter = itemFrame.map { CGPoint(x: $0.x + $0.width / 2, y: $0.y + $0.height / 2) }
+    let itemCenter = itemFrame.map { centerPoint(of: $0) }
     let hasScreenPosition = itemCenter.map { screenContainingAccessibilityPoint($0) != nil } ?? false
     let itemIsObscured = isElementObscured(frame: itemFrame, center: itemCenter)
 
@@ -1896,7 +1926,10 @@ func normalizedText(_ value: String?) -> String? {
 }
 
 func iconPath(for app: NSRunningApplication) -> String? {
-    let fileURL = iconCacheFileURL(for: app)
+    guard let key = iconCacheKey(bundleIdentifier: app.bundleIdentifier) else {
+        return nil
+    }
+    let fileURL = iconCacheDirectoryURL().appendingPathComponent("\(key).png")
 
     if FileManager.default.fileExists(atPath: fileURL.path) {
         return fileURL.path
@@ -1923,22 +1956,25 @@ func iconPath(for app: NSRunningApplication) -> String? {
     }
 
     do {
-        try png.write(to: fileURL)
+        try png.write(to: fileURL, options: .atomic)
         return fileURL.path
     } catch {
         return nil
     }
 }
 
-func iconCacheFileURL(for app: NSRunningApplication) -> URL {
-    let key = app.bundleIdentifier ??
-        app.bundleURL?.path ??
-        app.executableURL?.path ??
-        app.localizedName ??
-        "pid-\(app.processIdentifier)"
+func iconCacheKey(bundleIdentifier: String?) -> String? {
+    guard let bundleIdentifier, !bundleIdentifier.isEmpty else {
+        return nil
+    }
 
-    return iconCacheDirectoryURL()
-        .appendingPathComponent("\(sanitizedIconCacheKey(key)).png")
+    // FNV-1a is stable across processes, unlike Swift's randomized hashValue.
+    var hash: UInt64 = 14_695_981_039_346_656_037
+    for byte in bundleIdentifier.utf8 {
+        hash ^= UInt64(byte)
+        hash &*= 1_099_511_628_211
+    }
+    return "\(sanitizedIconCacheKey(bundleIdentifier))-\(String(hash, radix: 16))"
 }
 
 func iconCacheDirectoryURL() -> URL {
@@ -1981,7 +2017,11 @@ func centerPoint(of element: AXUIElement) -> CGPoint? {
         return nil
     }
 
-    return CGPoint(x: frame.x + frame.width / 2, y: frame.y + frame.height / 2)
+    return centerPoint(of: frame)
+}
+
+func centerPoint(of frame: Frame) -> CGPoint {
+    CGPoint(x: frame.x + frame.width / 2, y: frame.y + frame.height / 2)
 }
 
 func actions(of element: AXUIElement) -> [String] {
