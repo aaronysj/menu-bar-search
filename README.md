@@ -4,6 +4,8 @@ Search and open macOS menu bar items directly from Raycast, including icons that
 
 Menu Bar Search is built for crowded menu bars. When macOS hides status items behind the camera housing, you can still find the item in Raycast and open its menu without rearranging apps, changing display settings, or guessing where the icon went.
 
+![A menu bar item's menu opened from Raycast](media/open-menu.png)
+
 The extension uses the public macOS Accessibility API. It only lists menu bar items that are currently exposed in the Accessibility tree, so ordinary app menus such as File, Edit, or View are not included.
 
 ## Features
