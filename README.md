@@ -6,6 +6,10 @@ Menu Bar Search is built for crowded menu bars. When macOS hides status items be
 
 ![Menu bar items listed in Raycast](media/menu-bar-search-list.png)
 
+Choosing **Open Menu** opens that item's real menu bar menu, even when its icon is hidden behind the notch:
+
+![The Raycast menu bar menu opened from Menu Bar Search](media/click-open-menu.png)
+
 The extension uses the public macOS Accessibility API. It only lists menu bar items that are currently exposed in the Accessibility tree, so ordinary app menus such as File, Edit, or View are not included.
 
 ## Features
